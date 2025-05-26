@@ -4,15 +4,16 @@ services:
     build:
       context: ./tafe-scrum
     environment:
-      NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL:-http://taiga-back:8000/api/v1}"
-      NEXT_PUBLIC_BASE_URL_BLOG: "${NEXT_PUBLIC_BASE_URL_BLOG:-http://taiga-back:8000/api/v1/blog}"
-      NODE_ENV: "${NODE_ENV:-development}"
+      NEXT_PUBLIC_BASE_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_BASE_URL_BLOG: http://localhost:8000/api/v1/blog
+      NODE_ENV: development
     ports:
       - "3000:3000"
     depends_on:
       - taiga-back
     networks:
-      - app-network
+      - frontend-network
+      - backend-network  # Needs access to backend API
 
   # Backend (taiga-back)
   taiga-db:
@@ -30,7 +31,7 @@ services:
     volumes:
       - taiga-db-data:/var/lib/postgresql/data
     networks:
-      - app-network
+      - backend-network
 
   taiga-back:
     image: taigaio/taiga-back:latest
@@ -62,7 +63,7 @@ services:
     ports:
       - "8000:8000"
     networks:
-      - app-network
+      - backend-network
     depends_on:
       taiga-db:
         condition: service_healthy
@@ -92,7 +93,7 @@ services:
     volumes:
       - taiga-media-data:/taiga-back/media
     networks:
-      - app-network
+      - backend-network
     depends_on:
       taiga-db:
         condition: service_healthy
@@ -110,7 +111,7 @@ services:
     volumes:
       - taiga-async-rabbitmq-data:/var/lib/rabbitmq
     networks:
-      - app-network
+      - backend-network
 
   taiga-events-rabbitmq:
     image: rabbitmq:3.8-management-alpine
@@ -123,7 +124,7 @@ services:
     volumes:
       - taiga-events-rabbitmq-data:/var/lib/rabbitmq
     networks:
-      - app-network
+      - backend-network
 
   # Monitoring
   grafana:
@@ -136,7 +137,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     networks:
-      - app-network
+      - monitoring-network
+      - backend-network  # To access backend metrics
 
   prometheus:
     image: prom/prometheus:latest
@@ -149,7 +151,8 @@ services:
     ports:
       - "9090:9090"
     networks:
-      - app-network
+      - monitoring-network
+      - backend-network  # To scrape backend metrics
 
 volumes:
   taiga-media-data:
@@ -160,5 +163,9 @@ volumes:
   prometheus-data:
 
 networks:
-  app-network:
+  frontend-network:
+    driver: bridge
+  backend-network:
+    driver: bridge
+  monitoring-network:
     driver: bridge
