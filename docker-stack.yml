@@ -1,36 +1,15 @@
 services:
-  # Keep Traefik for internal routing
-  traefik:
-    image: traefik:latest
-    command:
-      - "--api.insecure=false"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:8080"
-      - "--entrypoints.websecure.address=:8443"
-      - "--log.level=DEBUG"
-    networks:
-      - traefik-public
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
   # Frontend - expose directly on port 3000 for Zeabur's Caddy
   frontend:
     image: rstubryan/tascrum-frontend:latest
     environment:
-      - NEXT_PUBLIC_BASE_URL=https://api-tascrum.zeabur.app/api/v1
-      - NEXT_PUBLIC_BASE_URL_BLOG=https://api-tascrum.zeabur.app/api/v1/blog
+      - NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL}
+      - NEXT_PUBLIC_BASE_URL_BLOG=${NEXT_PUBLIC_BASE_URL_BLOG}
       - NODE_ENV=production
-    # This is critical - expose on standard port for Zeabur
     ports:
       - "3000:3000"
     networks:
       - traefik-public
-    deploy:
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.frontend.rule=Host(`tascrum.zeabur.app`)"
-        - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
   grafana:
     image: grafana/grafana:latest
@@ -57,11 +36,11 @@ services:
     ports:
       - "9090:9090"
 
-  networks:
+networks:
   traefik-public:
     driver: overlay
     attachable: true
 
-  volumes:
+volumes:
   grafana-data:
   prometheus-data:
