@@ -1,14 +1,131 @@
 services:
+  # Frontend (tafe-scrum)
   frontend:
-    image: rstubryan/tascrum-frontend:latest
-    command: ["bun", "start"]
+    build:
+      context: ./tafe-scrum
     environment:
-      - NEXT_PUBLIC_BASE_URL=https://api-tascrum.zeabur.app/api/v1
-      - NEXT_PUBLIC_BASE_URL_BLOG=https://api-tascrum.zeabur.app/api/v1/blog
-      - NODE_ENV=production
+      NEXT_PUBLIC_BASE_URL: "${NEXT_PUBLIC_BASE_URL:-http://taiga-back:8000/api/v1}"
+      NEXT_PUBLIC_BASE_URL_BLOG: "${NEXT_PUBLIC_BASE_URL_BLOG:-http://taiga-back:8000/api/v1/blog}"
+      NODE_ENV: "${NODE_ENV:-development}"
     ports:
       - "3000:3000"
+    depends_on:
+      - taiga-back
+    networks:
+      - app-network
 
+  # Backend (taiga-back)
+  taiga-db:
+    image: postgres:12.3
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-taiga}"
+      POSTGRES_USER: "${POSTGRES_USER:-taiga}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-taiga}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-taiga}"]
+      interval: 2s
+      timeout: 15s
+      retries: 5
+      start_period: 3s
+    volumes:
+      - taiga-db-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  taiga-back:
+    image: taigaio/taiga-back:latest
+    environment:
+      # Django settings
+      DJANGO_DEBUG: "${DJANGO_DEBUG:-False}"
+      DJANGO_SETTINGS_MODULE: "${DJANGO_SETTINGS_MODULE:-settings.config}"
+      # Database settings
+      POSTGRES_DB: "${POSTGRES_DB:-taiga}"
+      POSTGRES_USER: "${POSTGRES_USER:-taiga}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-taiga}"
+      POSTGRES_HOST: "taiga-db"
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      # Taiga settings
+      TAIGA_SECRET_KEY: "${TAIGA_SECRET_KEY:-a2fb3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t}"
+      TAIGA_SITES_SCHEME: "${TAIGA_SITES_SCHEME:-http}"
+      TAIGA_SITES_DOMAIN: "${TAIGA_SITES_DOMAIN:-localhost:8000}"
+      # Rabbitmq settings
+      RABBITMQ_USER: "${RABBITMQ_USER:-taiga}"
+      RABBITMQ_PASS: "${RABBITMQ_PASS:-taiga}"
+      TAIGA_ASYNC_RABBITMQ_HOST: "taiga-async-rabbitmq"
+      TAIGA_EVENTS_RABBITMQ_HOST: "taiga-events-rabbitmq"
+      RABBITMQ_VHOST: "taiga"
+      # Feature flags
+      CELERY_ENABLED: "${CELERY_ENABLED:-True}"
+      PUBLIC_REGISTER_ENABLED: "${PUBLIC_REGISTER_ENABLED:-True}"
+    volumes:
+      - taiga-media-data:/taiga-back/media
+    ports:
+      - "8000:8000"
+    networks:
+      - app-network
+    depends_on:
+      taiga-db:
+        condition: service_healthy
+      taiga-events-rabbitmq:
+        condition: service_started
+      taiga-async-rabbitmq:
+        condition: service_started
+
+  taiga-async:
+    image: taigaio/taiga-back:latest
+    entrypoint: ["/taiga-back/docker/async_entrypoint.sh"]
+    environment:
+      # Same environment as taiga-back
+      DJANGO_DEBUG: "${DJANGO_DEBUG:-False}"
+      DJANGO_SETTINGS_MODULE: "${DJANGO_SETTINGS_MODULE:-settings.config}"
+      POSTGRES_DB: "${POSTGRES_DB:-taiga}"
+      POSTGRES_USER: "${POSTGRES_USER:-taiga}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-taiga}"
+      POSTGRES_HOST: "taiga-db"
+      POSTGRES_PORT: "${POSTGRES_PORT:-5432}"
+      TAIGA_SECRET_KEY: "${TAIGA_SECRET_KEY:-a2fb3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t}"
+      RABBITMQ_USER: "${RABBITMQ_USER:-taiga}"
+      RABBITMQ_PASS: "${RABBITMQ_PASS:-taiga}"
+      TAIGA_ASYNC_RABBITMQ_HOST: "taiga-async-rabbitmq"
+      TAIGA_EVENTS_RABBITMQ_HOST: "taiga-events-rabbitmq"
+      RABBITMQ_VHOST: "taiga"
+    volumes:
+      - taiga-media-data:/taiga-back/media
+    networks:
+      - app-network
+    depends_on:
+      taiga-db:
+        condition: service_healthy
+      taiga-async-rabbitmq:
+        condition: service_started
+
+  taiga-async-rabbitmq:
+    image: rabbitmq:3.8-management-alpine
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "${RABBITMQ_ERLANG_COOKIE:-secret_cookie}"
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:-taiga}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASS:-taiga}"
+      RABBITMQ_DEFAULT_VHOST: "taiga"
+    hostname: "taiga-async-rabbitmq"
+    volumes:
+      - taiga-async-rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - app-network
+
+  taiga-events-rabbitmq:
+    image: rabbitmq:3.8-management-alpine
+    environment:
+      RABBITMQ_ERLANG_COOKIE: "${RABBITMQ_ERLANG_COOKIE:-secret_cookie}"
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:-taiga}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASS:-taiga}"
+      RABBITMQ_DEFAULT_VHOST: "taiga"
+    hostname: "taiga-events-rabbitmq"
+    volumes:
+      - taiga-events-rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - app-network
+
+  # Monitoring
   grafana:
     image: grafana/grafana:latest
     volumes:
@@ -18,6 +135,8 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - app-network
 
   prometheus:
     image: prom/prometheus:latest
@@ -29,7 +148,17 @@ services:
       - '--storage.tsdb.path=/prometheus'
     ports:
       - "9090:9090"
+    networks:
+      - app-network
 
 volumes:
+  taiga-media-data:
+  taiga-db-data:
+  taiga-async-rabbitmq-data:
+  taiga-events-rabbitmq-data:
   grafana-data:
   prometheus-data:
+
+networks:
+  app-network:
+    driver: bridge
