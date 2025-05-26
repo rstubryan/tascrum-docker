@@ -8,15 +8,11 @@ services:
       - NODE_ENV=production
     ports:
       - "3000:3000"
-    networks:
-      - traefik-public
 
   grafana:
     image: grafana/grafana:latest
     volumes:
       - grafana-data:/var/lib/grafana
-    networks:
-      - traefik-public
     ports:
       - "3001:3000"
     environment:
@@ -31,15 +27,8 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-    networks:
-      - traefik-public
     ports:
       - "9090:9090"
-
-networks:
-  traefik-public:
-    driver: overlay
-    attachable: true
 
 volumes:
   grafana-data:
