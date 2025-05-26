@@ -1,14 +1,12 @@
 services:
+  # Simplified Traefik configuration for single domain with port-based routing
   traefik:
     image: traefik:latest
     command:
       - "--api.insecure=false"
       - "--providers.docker=true"
-      - "--providers.swarm=true"  # Use this instead of swarmMode
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443"
       - "--log.level=INFO"
     ports:
@@ -19,15 +17,10 @@ services:
     networks:
       - traefik-public
     deploy:
-      placement:
-        constraints:
-          - node.role == manager
-      update_config:
-        order: start-first
-        failure_action: rollback
       labels:
         - "traefik.enable=true"
 
+  # Main application on the primary domain
   frontend:
     image: rstubryan/tascrum-frontend:latest
     environment:
@@ -44,20 +37,17 @@ services:
         delay: 10s
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.frontend.rule=Host(`tascrum.zeabur.app`)"
-        - "traefik.http.routers.frontend.entrypoints=websecure"
+        - "traefik.http.routers.frontend.rule=Host(`{{index .Service.Labels \"com.zeabur.domain\"}}`)"
         - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
+  # Auto-update service
   watchtower:
     image: containrrr/watchtower
     command: --interval 300 --cleanup --include-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    deploy:
-      placement:
-        constraints:
-          - node.role == manager
 
+  # Grafana with port-based access
   grafana:
     image: grafana/grafana:latest
     volumes:
@@ -70,10 +60,12 @@ services:
     deploy:
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.grafana.rule=Host(`grafana-tascrum.zeabur.app`)"
-        - "traefik.http.routers.grafana.entrypoints=websecure"
+        - "traefik.http.routers.grafana.rule=Host(`{{index .Service.Labels \"com.zeabur.domain\"}}`) && PathPrefix(`/grafana`)"
         - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+        - "traefik.http.middlewares.grafana-strip.stripprefix.prefixes=/grafana"
+        - "traefik.http.routers.grafana.middlewares=grafana-strip"
 
+  # Prometheus
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -85,9 +77,12 @@ services:
     networks:
       - traefik-public
     deploy:
-      placement:
-        constraints:
-          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.prometheus.rule=Host(`{{index .Service.Labels \"com.zeabur.domain\"}}`) && PathPrefix(`/prometheus`)"
+        - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+        - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
+        - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
 
 networks:
   traefik-public:
