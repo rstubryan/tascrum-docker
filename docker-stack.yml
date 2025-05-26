@@ -1,15 +1,20 @@
 services:
-  # Internal Traefik - don't expose ports 80/443 externally
+  # Keep Traefik but configure it to work alongside Caddy
   traefik:
     image: traefik:latest
     command:
       - "--api.insecure=false"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:8080"  # Internal port instead of 80
-      - "--entrypoints.websecure.address=:8443"  # Internal port instead of 443
+      - "--entrypoints.web.address=:8080"  # Internal port
+      - "--entrypoints.websecure.address=:8443"  # Internal port
       - "--log.level=DEBUG"
-    # Don't expose ports to host - let Zeabur's Caddy handle external traffic
+    # Expose Traefik on ports that don't conflict with Caddy
+    ports:
+      - "8080:8080"  # Internal HTTP port
+      - "8443:8443"  # Internal HTTPS port
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - traefik-public
 
@@ -17,23 +22,23 @@ services:
   frontend:
     image: rstubryan/tascrum-frontend:latest
     environment:
-      # Use production URLs, not localhost
-      - NEXT_PUBLIC_BASE_URL=https://your-backend-api.zeabur.app/api/v1
-      - NEXT_PUBLIC_BASE_URL_BLOG=https://your-backend-api.zeabur.app/api/v1/blog
+      # Need to set production URLs here, not localhost from .env
+      - NEXT_PUBLIC_BASE_URL=https://api-tascrum.zeabur.app/api/v1
+      - NEXT_PUBLIC_BASE_URL_BLOG=https://api-tascrum.zeabur.app/api/v1/blog
       - NODE_ENV=production
+    # Critical: expose port 80 for Zeabur's Caddy while keeping in Traefik network
+    ports:
+      - "80:3000"  # This is what Caddy expects
     networks:
       - traefik-public
-    # Expose the port so Zeabur's Caddy can reach it
-    ports:
-      - "3000:3000"
     deploy:
       replicas: 2
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.frontend.rule=Host(`tascrum.zeabur.app`)"
+        - "traefik.http.routers.frontend.entrypoints=web"  # Use internal entrypoint
         - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
-  # Other services with ports exposed to Caddy
   grafana:
     image: grafana/grafana:latest
     volumes:
@@ -41,7 +46,7 @@ services:
     networks:
       - traefik-public
     ports:
-      - "3001:3000"  # Different external port
+      - "3001:3000"  # Expose to Caddy
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
@@ -49,6 +54,7 @@ services:
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
+        - "traefik.http.routers.grafana.entrypoints=web"
         - "traefik.http.middlewares.grafana-strip.stripprefix.prefixes=/grafana"
         - "traefik.http.routers.grafana.middlewares=grafana-strip"
 
@@ -63,11 +69,12 @@ services:
     networks:
       - traefik-public
     ports:
-      - "9090:9090"  # Expose directly
+      - "9090:9090"  # Expose to Caddy
     deploy:
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
+        - "traefik.http.routers.prometheus.entrypoints=web"
         - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
         - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
 
