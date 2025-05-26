@@ -1,72 +1,57 @@
 services:
-  # Simplified Traefik configuration for single domain with port-based routing
+  # Internal Traefik - don't expose ports 80/443 externally
   traefik:
     image: traefik:latest
     command:
       - "--api.insecure=false"
       - "--providers.docker=true"
-      - "--providers.swarm=true"
       - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--log.level=INFO"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - "--entrypoints.web.address=:8080"  # Internal port instead of 80
+      - "--entrypoints.websecure.address=:8443"  # Internal port instead of 443
+      - "--log.level=DEBUG"
+    # Don't expose ports to host - let Zeabur's Caddy handle external traffic
     networks:
       - traefik-public
-    deploy:
-      labels:
-        - "traefik.enable=true"
 
-  # Main application on the primary domain
+  # Main frontend application
   frontend:
     image: rstubryan/tascrum-frontend:latest
     environment:
-      - NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL}
-      - NEXT_PUBLIC_BASE_URL_BLOG=${NEXT_PUBLIC_BASE_URL_BLOG}
+      # Use production URLs, not localhost
+      - NEXT_PUBLIC_BASE_URL=https://your-backend-api.zeabur.app/api/v1
+      - NEXT_PUBLIC_BASE_URL_BLOG=https://your-backend-api.zeabur.app/api/v1/blog
       - NODE_ENV=production
     networks:
       - traefik-public
+    # Expose the port so Zeabur's Caddy can reach it
+    ports:
+      - "3000:3000"
     deploy:
       replicas: 2
-      update_config:
-        order: start-first
-        failure_action: rollback
-        delay: 10s
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.frontend.rule=Host(`{{index .Service.Labels \"com.zeabur.domain\"}}`)"
+        - "traefik.http.routers.frontend.rule=Host(`tascrum.zeabur.app`)"
         - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
-  # Auto-update service
-  watchtower:
-    image: containrrr/watchtower
-    command: --interval 300 --cleanup --include-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-
-  # Grafana with port-based access
+  # Other services with ports exposed to Caddy
   grafana:
     image: grafana/grafana:latest
     volumes:
       - grafana-data:/var/lib/grafana
     networks:
       - traefik-public
+    ports:
+      - "3001:3000"  # Different external port
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     deploy:
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.grafana.rule=Host(`{{index .Service.Labels \"com.zeabur.domain\"}}`) && PathPrefix(`/grafana`)"
-        - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+        - "traefik.http.routers.grafana.rule=PathPrefix(`/grafana`)"
         - "traefik.http.middlewares.grafana-strip.stripprefix.prefixes=/grafana"
         - "traefik.http.routers.grafana.middlewares=grafana-strip"
 
-  # Prometheus
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -77,11 +62,12 @@ services:
       - '--storage.tsdb.path=/prometheus'
     networks:
       - traefik-public
+    ports:
+      - "9090:9090"  # Expose directly
     deploy:
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.prometheus.rule=Host(`{{index .Service.Labels \"com.zeabur.domain\"}}`) && PathPrefix(`/prometheus`)"
-        - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+        - "traefik.http.routers.prometheus.rule=PathPrefix(`/prometheus`)"
         - "traefik.http.middlewares.prometheus-strip.stripprefix.prefixes=/prometheus"
         - "traefik.http.routers.prometheus.middlewares=prometheus-strip"
 
